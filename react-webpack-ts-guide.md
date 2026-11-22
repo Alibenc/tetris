@@ -1,38 +1,34 @@
-# React + Webpack + TypeScript с нуля
+# React + TypeScript + Webpack + Tailwind CSS + Ant Design
 
-**Задача:** самостоятельно настроить сборку React-приложения без Vite и Create React App.
+Собери проект **с нуля, без Vite и Create React App**. Используем Webpack 5, Tailwind CSS 4 и готовые компоненты Ant Design.
 
 ## 1. Инициализация
 
 ```bash
-mkdir react-webpack-ts
-cd react-webpack-ts
+mkdir react-webpack-tailwind
+cd react-webpack-tailwind
 npm init -y
-```
-
-Установи зависимости:
-
-```bash
-npm i react react-dom
-npm i -D typescript @types/react @types/react-dom webpack webpack-cli webpack-dev-server ts-loader html-webpack-plugin css-loader style-loader
+npm install react react-dom antd
+npm install -D typescript @types/react @types/react-dom webpack webpack-cli webpack-dev-server ts-loader html-webpack-plugin style-loader css-loader postcss postcss-loader tailwindcss @tailwindcss/postcss
 ```
 
 ## 2. Структура проекта
 
 ```text
-react-webpack-ts/
+react-webpack-tailwind/
 ├── public/
 │   └── index.html
 ├── src/
 │   ├── App.tsx
 │   ├── index.tsx
-│   └── styles.css
-├── webpack.config.cjs
+│   └── index.css
+├── postcss.config.cjs
 ├── tsconfig.json
+├── webpack.config.cjs
 └── package.json
 ```
 
-## 3. Настройка TypeScript
+## 3. TypeScript
 
 Создай `tsconfig.json`:
 
@@ -40,18 +36,19 @@ react-webpack-ts/
 {
   "compilerOptions": {
     "target": "ES2020",
-    "lib": ["DOM", "DOM.Iterable", "ES2020"],
     "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "moduleResolution": "Node",
     "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": false
   },
   "include": ["src"]
 }
 ```
+
+> Важно: для `ts-loader` не ставь `noEmit: true`, иначе TypeScript не отдаст JavaScript Webpack.
 
 ## 4. Настройка Webpack
 
@@ -61,8 +58,7 @@ react-webpack-ts/
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
-module.exports = (_env, argv) => ({
-  mode: argv.mode || 'development',
+module.exports = {
   entry: './src/index.tsx',
   output: {
     path: path.resolve(__dirname, 'dist'),
@@ -74,8 +70,15 @@ module.exports = (_env, argv) => ({
   },
   module: {
     rules: [
-      { test: /\.tsx?$/, use: 'ts-loader', exclude: /node_modules/ },
-      { test: /\.css$/, use: ['style-loader', 'css-loader'] },
+      {
+        test: /\.tsx?$/,
+        use: 'ts-loader',
+        exclude: /node_modules/,
+      },
+      {
+        test: /\.css$/,
+        use: ['style-loader', 'css-loader', 'postcss-loader'],
+      },
     ],
   },
   plugins: [
@@ -84,14 +87,31 @@ module.exports = (_env, argv) => ({
   devServer: {
     port: 3000,
     hot: true,
-    open: true,
   },
-});
+};
 ```
 
-Обрати внимание на `entry`, `output`, `resolve`, `module.rules` и `plugins`: разберись, за что отвечает каждый параметр.
+## 5. Подключение Tailwind CSS
 
-## 5. Создание React-приложения
+Создай `postcss.config.cjs`:
+
+```js
+module.exports = {
+  plugins: {
+    '@tailwindcss/postcss': {},
+  },
+};
+```
+
+В `src/index.css`:
+
+```css
+@import "tailwindcss";
+```
+
+Для Tailwind 4 не нужны `tailwind.config.js`, команда `tailwindcss init` и директивы `@tailwind base/components/utilities`.
+
+## 6. React + Ant Design
 
 `public/index.html`:
 
@@ -101,7 +121,7 @@ module.exports = (_env, argv) => ({
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>React + Webpack + TS</title>
+    <title>React + Webpack</title>
   </head>
   <body>
     <div id="root"></div>
@@ -114,74 +134,70 @@ module.exports = (_env, argv) => ({
 ```tsx
 import { createRoot } from 'react-dom/client';
 import App from './App';
-import './styles.css';
+import './index.css';
 
-const root = document.getElementById('root');
-if (!root) throw new Error('Root element not found');
-
-createRoot(root).render(<App />);
+createRoot(document.getElementById('root')!).render(<App />);
 ```
 
-`src/App.tsx`:
+`src/App.tsx` — пример: `Card`, `Input`, `Button` и `Tag` из Ant Design, а расположение и фон — через Tailwind:
 
 ```tsx
 import { useState } from 'react';
+import { Button, Card, Input, Tag } from 'antd';
 
 export default function App() {
-  const [count, setCount] = useState(0);
+  const [name, setName] = useState('');
+  const [savedName, setSavedName] = useState('');
 
   return (
-    <main>
-      <h1>React + Webpack + TypeScript</h1>
-      <button onClick={() => setCount(count + 1)}>
-        Нажатий: {count}
-      </button>
+    <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+      <Card title="Профиль" className="w-full max-w-md shadow-lg">
+        <div className="flex flex-col gap-4">
+          <Input
+            placeholder="Введите имя"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+          <Button type="primary" onClick={() => setSavedName(name.trim())}>
+            Сохранить
+          </Button>
+          {savedName && <Tag color="blue">Привет, {savedName}!</Tag>}
+        </div>
+      </Card>
     </main>
   );
 }
 ```
 
-`src/styles.css`:
+Ant Design уже содержит стили компонентов: отдельно подключать `antd.css` не нужно. Классы `flex`, `p-6`, `max-w-md` и другие предоставляет Tailwind. `@types/antd` также не нужен — типы включены в библиотеку.
 
-```css
-body {
-  font-family: Arial, sans-serif;
-  margin: 40px;
-}
-```
+## 7. Команды запуска
 
-## 6. Скрипты запуска
-
-Добавь в `package.json` в поле `scripts`:
+Добавь в `package.json` в раздел `scripts`:
 
 ```json
-{
+"scripts": {
   "start": "webpack serve --mode development",
   "build": "webpack --mode production",
   "typecheck": "tsc --noEmit"
 }
 ```
 
-Запуск:
-
 ```bash
-npm start
+npm run start      # http://localhost:3000
+npm run typecheck  # проверка TypeScript
+npm run build      # production-сборка в dist/
 ```
 
-Production-сборка и проверка типов:
+## 8. Небольшая практика
 
-```bash
-npm run build
-npm run typecheck
-```
+Сделай **карточку пользователя** с аватаром, именем, описанием, тегами навыков и кнопкой подписки.
 
-Webpack создаст папку `dist` при сборке. Её содержимое — готовые статические файлы приложения.
+- Вынеси карточку в компонент `ProfileCard.tsx`.
+- Опиши `interface Profile` и передавай данные через props.
+- Используй `Card`, `Button`, `Input` и `Tag` из Ant Design, а для компоновки — классы Tailwind.
+- Сделай адаптивность для телефона и hover-эффекты.
 
-## 7. Самостоятельная практика
+**Готово, когда:** сайт запускается, стили Tailwind применяются, `npm run typecheck` и `npm run build` проходят без ошибок.
 
-1. Добавь компонент `Counter`, вынеси в него счётчик и типизируй его props.
-2. Подключи SCSS (`sass`, `sass-loader`) и замени `styles.css` на `styles.scss`.
-3. Настрой импорт SVG и PNG через Webpack 5 Asset Modules.
-4. Разберись, чем отличаются `development` и `production`, и сравни сборки.
-
-**Критерий готовности:** приложение открывается через `npm start`, счётчик работает, `npm run typecheck` и `npm run build` завершаются без ошибок.
+Документация: [Webpack + TypeScript](https://webpack.js.org/guides/typescript/) · [Tailwind + PostCSS](https://tailwindcss.com/docs/installation/using-postcss) · [Ant Design](https://ant.design/components/overview/)
