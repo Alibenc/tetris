@@ -115,334 +115,86 @@ terrain.draw(screen, camera_x=0)
 
 ## 3. Добавляем камеру и мировые координаты
 
-Не нужно постоянно передвигать весь мир. Пусть машина имеет мировую координату `car_x`, а камера — `camera_x`.
+До этого мы рисовали трассу с `camera_x=0`. Теперь сделаем так, чтобы камера следовала за машиной. **С этого раздела используем ту же архитектуру, что и в готовом проекте**: `Game` управляет игрой, `Car` хранит положение и физику автомобиля, `Terrain` отвечает за землю.
+
+### 3.1. Создаём класс `Car`
+
+В `src/car.py` запиши:
 
 ```python
-screen_x = world_x - camera_x
+class Car:
+    def __init__(self, x, terrain):
+        self.x = float(x)                         # мировая координата машины
+        self.y = terrain.height(x) - 54           # машина чуть выше поверхности
+        self.vx = 0.0                             # скорость по горизонтали
+        self.vy = 0.0                             # скорость по вертикали
+        self.angle = 0.0                          # наклон кузова, радианы
+        self.angular_velocity = 0.0               # скорость вращения
+        self.on_ground = False
+        self.crashed = False
+        self.air_time = 0.0
 ```
 
-Например, если машина находится в `world_x = 1500`, а камера в `camera_x = 1100`, на экране она будет на `x = 400`.
+Здесь **`self.x` — это то же самое, что `car_x` в простых примерах**. Отдельную глобальную переменную `car_x` мы не создаём. Аналогично `vx` и `vy` существуют как поля машины: `self.vx` и `self.vy`.
 
-Сделай плавное следование:
+В другом классе доступ к ним выглядит как `self.car.x`, `self.car.vx`, `self.car.vy`.
+
+### 3.2. Создаём `Game` и камеру
+
+Добавь в `src/game.py`:
 
 ```python
-target = max(0, car_x - 1280 * 0.30)
-camera_x += (target - camera_x) * min(1, dt * 5)
+import pygame
+from .terrain import Terrain
+from .car import Car
+
+WIDTH, HEIGHT = 1280, 720
+FPS = 60
+
+class Game:
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption('Hill Rider')
+        self.clock = pygame.time.Clock()
+        self.terrain = Terrain()
+        self.car = Car(105, self.terrain)
+        self.camera_x = 0.0
+        self.camera_y = 0.0
+
+    def update(self, dt, keys):
+        # Временное управление, только для проверки камеры.
+        if keys[pygame.K_RIGHT]:
+            self.car.x += 250 * dt
+        if keys[pygame.K_LEFT]:
+            self.car.x = max(0, self.car.x - 250 * dt)
+        self.car.y = self.terrain.height(self.car.x) - 54
+
+        desired_camera_x = max(0, self.car.x - WIDTH * 0.30)
+        self.camera_x += (desired_camera_x - self.camera_x) * min(1, dt * 5)
+
+    def draw(self):
+        self.screen.fill((141, 208, 232))
+        self.terrain.draw(self.screen, self.camera_x)
+        x_on_screen = int(self.car.x - self.camera_x)
+        y_on_screen = int(self.car.y - self.camera_y)
+        pygame.draw.rect(self.screen, (230, 95, 60),
+                         (x_on_screen - 35, y_on_screen - 15, 70, 30))
+        pygame.display.flip()
+
+    def run(self):
+        running = True
+        while running:
+            dt = min(self.clock.tick(FPS) / 1000, 1 / 30)
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+            self.update(dt, pygame.key.get_pressed())
+            self.draw()
+        pygame.quit()
 ```
 
-**Задание:** с помощью стрелок двигай тестовый прямоугольник по `car_x`, а камера должна следовать за ним. Проверь, что мир не заканчивается на границе окна.
-
----
-
-## 4. Строим физическую модель машины
-
-Самая интересная часть. Если просто поставить спрайт машины на высоту земли, хорошей физики не получится: она будет прилипать к дороге и не сможет нормально прыгать.
-
-Поэтому представим кузов **твердым телом**. У него есть:
-
-| Переменная | Значение |
-|---|---|
-| `x`, `y` | Центр кузова в мире |
-| `vx`, `vy` | Скорость по X и Y |
-| `angle` | Угол кузова в радианах |
-| `angular_velocity` | Скорость вращения |
-| `mass` | Масса машины |
-| `inertia` | Момент инерции: насколько трудно раскрутить машину |
-
-### 4.1. Гравитация
-
-Начни с обычного падения:
-
-```python
-vy += 1250 * dt
-x += vx * dt
-y += vy * dt
-```
-
-Чем больше `dt`, тем больше перемещение за кадр; на разных компьютерах движение остается примерно одинаковым.
-
-### 4.2. Вращение кузова
-
-Чтобы повернуть локальную точку кузова `(local_x, local_y)` вокруг его центра, используем:
-
-```python
-import math
-
-rotated_x = local_x * math.cos(angle) - local_y * math.sin(angle)
-rotated_y = local_x * math.sin(angle) + local_y * math.cos(angle)
-
-world_x = x + rotated_x
-world_y = y + rotated_y
-```
-
-В координатах Pygame **положительный угол** вращает машинку по часовой стрелке (носом вперед-вниз, если нос справа).
-
-**Проверь:** нарисуй корпус как многоугольник и понажимай клавиши, меняющие `angle`. Колеса должны вращаться вместе с корпусом, а не оставаться неподвижными.
-
----
-
-## 5. Колеса, склон и подвеска
-
-У нас две точки крепления колес: `(-44, 15)` и `(44, 15)` относительно центра кузова. Радиус колеса — `19` пикселей.
-
-Колеса рисуются как окружности, а динамика контакта реализуется силами, приложенными к кузову в точках колес.
-
-### 5.1. Когда колесо касается земли?
-
-Для каждого колеса найди его мировую позицию `(wheel_x, wheel_y)` и высоту земли прямо под ним:
-
-```python
-ground_y = terrain.height(wheel_x)
-penetration = wheel_y + wheel_radius - ground_y
-```
-
-Если `penetration > 0`, колесо касается земли и немного сжимает подвеску. Для точной работы на склоне в эталоне глубина проникновения корректируется с помощью нормали к поверхности.
-
-### 5.2. Находим нормаль к дороге
-
-Сначала вычисли наклон трассы численно:
-
-```python
-slope = (terrain.height(x + 4) - terrain.height(x - 4)) / 8
-```
-
-Нормаль, направленная от земли вверх:
-
-```python
-length = math.sqrt(slope * slope + 1)
-normal_x = -slope / length
-normal_y = -1 / length
-```
-
-У горизонтальной дороги нормаль будет `(0, -1)`.
-
-### 5.3. Пружина и амортизатор
-
-Контактная сила — сумма пружины и демпфера:
-
-```python
-spring_force = max(0, stiffness * penetration - damping * normal_speed)
-force_x = normal_x * spring_force
-force_y = normal_y * spring_force
-```
-
-- `stiffness` — жесткость подвески;
-- `damping` — гашение колебаний;
-- `normal_speed` — скорость колеса по нормали к поверхности.
-
-Если не добавить демпфирование, машина будет очень долго прыгать как мяч. Если сделать демпфирование слишком большим, езда станет «деревянной».
-
-У точки на вращающемся кузове своя скорость:
-
-```python
-point_vx = vx - angular_velocity * offset_y
-point_vy = vy + angular_velocity * offset_x
-normal_speed = point_vx * normal_x + point_vy * normal_y
-```
-
-### 5.4. Сила поворачивает кузов
-
-Сила, приложенная не в центре, создает крутящий момент:
-
-```python
-torque = offset_x * force_y - offset_y * force_x
-```
-
-Применение всех сил в конце шага:
-
-```python
-vx += force_x_total / mass * dt
-vy += force_y_total / mass * dt
-angular_velocity += torque_total / inertia * dt
-angle += angular_velocity * dt
-```
-
-**Результат:** переднее и заднее колеса независимо касаются склона, поэтому машина наклоняется, приземляется и подпрыгивает естественнее.
-
-**Задание:** убери `damping`, запусти игру и посмотри, как изменится подвеска. Верни обратно.
-
----
-
-## 6. Газ, тормоз и вращение в воздухе — ключевая механика
-
-**Управление:** `→` — газ, `←` — тормоз. Также можно использовать `D/A`.
-
-### 6.1. На земле
-
-Найди касательную к дороге. Если нормаль `(nx, ny)`, касательная направо:
-
-```python
-tangent_x = -ny
-tangent_y = nx
-```
-
-При газе прикладываем силу **вдоль касательной**. При тормозе — в обратную сторону. Так машина разгоняется по склону, а не по фиксированной горизонтали.
-
-```python
-drive = 0
-if gas:
-    drive += 260000
-if brake:
-    drive -= 190000
-
-force_x += tangent_x * drive
-force_y += tangent_y * drive
-```
-
-В эталоне тяга распределена между двумя колесами и дополнена сопротивлением качению.
-
-### 6.2. В воздухе
-
-При отсутствии контакта колес с землей **не нужно создавать горизонтальную тягу**. Вместо этого кнопки воздействуют на вращение машины:
-
-```python
-if not on_ground:
-    if gas:
-        torque -= 335000   # поворачивает НАЗАД (нос вверх)
-    if brake:
-        torque += 335000   # поворачивает ВПЕРЕД (нос вниз)
-```
-
-Почему именно знаки? Поскольку нос нашей машинки смотрит вправо, отрицательный угол поворачивает нос вверх, а положительный — вниз.
-
-Не задавай `angle += 0.1` напрямую — тогда управление станет резким и проигнорирует инерцию. Правильнее менять **угловое ускорение** через момент силы:
-
-```python
-angular_velocity += torque / inertia * dt
-angle += angular_velocity * dt
-```
-
-**Тест механики:** разгонись, подлети на холме, удерживай `→`: нос пойдет вверх. В следующем прыжке удерживай `←`: нос пойдет вниз. При этом в воздухе машинка продолжает лететь по инерции.
-
----
-
-## 7. Делаем трассу сложнее по мере продвижения
-
-Просто использовать `sin(x)` недостаточно: получится одна бесконечная одинаковая волна. Нужно увеличивать высоту и частоту неровностей постепенно.
-
-Введем уровень сложности, который зависит от координаты X:
-
-```python
-def difficulty(x):
-    return min(6, max(0, int(x / 5000)))
-```
-
-То есть уровень увеличивается примерно каждые **417 метров** при масштабе 12 пикселей на метр.
-
-Пример рельефа из нескольких волн:
-
-```python
-def height(x):
-    level = difficulty(x)
-    amplitude = 24 + level * 12
-    return (
-        545
-        + math.sin(x * 0.005) * amplitude * 1.3
-        + math.sin(x * 0.016) * amplitude * 0.6
-        + math.sin(x * 0.033) * amplitude * 0.28
-    )
-```
-
-Первая волна задает крупные холмы, вторая создает более частые подъемы, третья — мелкие неровности.
-
-В эталонном файле `src/terrain.py` есть еще три важных приема:
-
-1. **Плавный старт:** сначала ровная площадка, а затем волны набирают амплитуду.
-2. **Локальные бугры:** отдельные подъемы/ямы из функции `exp(...)`, случайные, но воспроизводимые благодаря фиксированному `seed`.
-3. **Ограничение высоты:** поверхность не уходит за экран бесконечно далеко.
-
-**Задание:** добавь четвертую волну, которая появляется только после третьего уровня сложности, и сравни поведение машины.
-
----
-
-## 8. Делай физику стабильной
-
-При 60 FPS один кадр продолжается примерно 0.0167 секунды. Пружины — очень сильные силы. Если просчитывать все одним большим шагом, колеса могут «проваливаться» в землю, а автомобиль может начать дрожать.
-
-Разбей каждый кадр на четыре подшага:
-
-```python
-steps = 4
-for _ in range(steps):
-    car.update(dt / steps, terrain, gas, brake)
-```
-
-Чем меньше шаг, тем стабильнее обычно работает численная интеграция. Но слишком много подшагов расходуют производительность.
-
-Также полезны ограничения максимальной горизонтальной скорости, скорости падения и угловой скорости. Они есть в готовом `src/car.py`.
-
----
-
-## 9. Монеты, бензин и завершение заезда
-
-Чтобы игра не была просто бесконечной поездкой, добавим цели.
-
-**Монеты:** через определенные промежутки трассы размещаем монетки над дорогой. Если расстояние от центра машины до монетки меньше заданного радиуса, монетка исчезает, а счетчик увеличивается.
-
-```python
-import math
-
-distance = math.hypot(car.x - coin_x, car.y - coin_y)
-if distance < 62:
-    coins += 1
-    # пометь монетку собранной
-```
-
-**Топливо:** плавно уменьшается со временем и немного быстрее при нажатом газе:
-
-```python
-fuel -= dt * (0.47 + (0.55 if gas else 0))
-```
-
-Канистра восстанавливает часть запаса:
-
-```python
-fuel = min(100, fuel + 42)
-```
-
-**Проигрыш:** если машина ударилась крышей о землю или закончилось топливо. В эталоне для столкновения крыши используются несколько контрольных точек кузова.
-
-**Рестарт:** по `R`/`Пробел` все игровые данные возвращаются к начальным значениям. Это удобнее, чем закрывать и открывать окно.
-
----
-
-## 10. Графика и интерфейс
-
-Изображения не обязательны: всю игру можно нарисовать геометрическими фигурами Pygame:
-
-- `pygame.draw.polygon` — кузов, окна, земля;
-- `pygame.draw.circle` — колеса, солнце, облака, монеты;
-- `pygame.draw.rect` — топливо, канистры, подложка интерфейса;
-- `pygame.font.SysFont` — текст и счетчики.
-
-Чтобы объекты рисовались в правильном порядке, придерживайся последовательности:
-
-```python
-draw_background()
-draw_terrain()
-draw_pickups()
-draw_car()
-draw_hud()
-pygame.display.flip()
-```
-
-Для эффекта параллакса дальние горы можно смещать всего на `camera_x * 0.1`, а ближние — на `camera_x * 0.2`. Трасса при этом сдвигается на полное `camera_x`.
-
-**Задание:** перерисуй автомобиль своими цветами. Добавь передние фары или выхлопные частицы.
-
----
-
-## 11. Как собрать итоговый проект
-
-Когда механики заработают по отдельности, разнеси их по файлам:
-
-- `settings.py` хранит константы;
-- `terrain.py` описывает поверхность;
-- `car.py` управляет физикой;
-- `game.py` хранит игровой цикл, камеру, предметы и интерфейс;
-- `main.py` запускает игру.
-
-После этого файл `main.py` должен быть очень коротким:
+Замени `main.py`:
 
 ```python
 from src.game import Game
@@ -451,29 +203,605 @@ if __name__ == '__main__':
     Game().run()
 ```
 
-В эталоне уже реализованы все этапы; можно сравнивать свои решения с `src/car.py` и `src/terrain.py`. Не обязательно копировать архитектуру один в один — важнее понимать, как данные переходят между компонентами.
+**Как работает камера:** у машины есть мировая координата `self.car.x`, у камеры — `self.camera_x`. Чтобы нарисовать объект на экране, вычитаем координату камеры:
 
-## Чек-лист готовности
+```python
+screen_x = world_x - self.camera_x
+```
 
-- [ ] Машина разгоняется по холмам и тормозит.
-- [ ] Машина подпрыгивает и свободно летит по инерции.
-- [ ] В воздухе **газ вращает назад**, а **тормоз вращает вперед**.
-- [ ] Приземление зависит от угла и работы подвески.
-- [ ] Камера следует за машиной.
-- [ ] Неровности становятся заметно сложнее по мере увеличения расстояния.
-- [ ] Есть монеты, топливо, проигрыш и рестарт.
-- [ ] Скорость игры не зависит напрямую от FPS.
+**Проверка:** стрелками перемещай прямоугольник по трассе. Он должен оставаться примерно в левой трети экрана, когда камера догонит его. Это пока *тестовое перемещение*, позже заменим его физикой.
 
-## Дополнительные задачи, если останется время
+> Если в готовой игре встретишь `desired_camera_y` и `self.camera_y`, это дополнительное вертикальное слежение. Пока оно не требуется, но в финале мы его добавим.
 
-**Уровень 1:** показывать максимальную скорость и рекорд заезда; сохранять рекорд в JSON-файле.
+---
 
-**Уровень 2:** добавить разные автомобили с разными параметрами `MASS`, `INERTIA`, `SPRING` и `ENGINE_FORCE`.
+## 4. Делаем машину физическим объектом
 
-**Уровень 3:** сделать две трассы: «Луга» (плавные холмы) и «Горы» (частые резкие подъемы). Переключение трасс в меню.
+Теперь меняем `src/car.py`. Важно не путаться: внутри класса `Car` поля называются **`self.x`, `self.y`, `self.vx`, `self.vy`, `self.angle`, `self.angular_velocity`**. В `Game` доступ к ним осуществляется через `self.car`.
 
-**Уровень 4:** добавить бонус за полный переворот в воздухе на 360°, но начислять его только после успешного приземления.
+### 4.1. Гравитация и скорость
 
-### Что полезно исследовать
+Добавь в `src/car.py` импорт:
 
-Поиграйся с параметрами в `src/settings.py`. Уменьши `INERTIA` вдвое — машина начнет легче переворачиваться. Увеличь `DAMPING` — подвеска станет спокойнее. Увеличь `ENGINE_FORCE` — разгон станет сильнее. После каждого изменения сформулируй, **почему** поведение изменилось.
+```python
+import math
+import pygame
+from .settings import GRAVITY, MASS, INERTIA
+```
+
+Параметры `GRAVITY`, `MASS`, `INERTIA` вынеси в `src/settings.py`:
+
+```python
+GRAVITY = 1250.0
+MASS = 430.0
+INERTIA = 155000.0
+```
+
+Внутри класса `Car` напиши первый вариант метода:
+
+```python
+    def update(self, dt, terrain, gas, brake):
+        self.vy += GRAVITY * dt
+        self.x += self.vx * dt
+        self.y += self.vy * dt
+```
+
+Обрати внимание: **`update` — метод `Car`, а не `Game`**. В `Game.update` нужно вызвать его:
+
+```python
+self.car.update(dt, self.terrain, gas=False, brake=False)
+```
+
+Удали оттуда временный блок, который напрямую менял `self.car.x` и выставлял `self.car.y = terrain.height(...)`. Иначе машина будет «телепортироваться» обратно на землю каждый кадр.
+
+**Проверка:** машина падает вниз под действием гравитации. Пока у неё нет столкновений с дорогой — это нормально.
+
+### 4.2. Поворот точки вокруг центра кузова
+
+Добавь два метода в класс `Car` (они есть в готовой версии):
+
+```python
+    def rotate(self, x, y):
+        c, s = math.cos(self.angle), math.sin(self.angle)
+        return x * c - y * s, x * s + y * c
+
+    def point(self, local_x, local_y):
+        dx, dy = self.rotate(local_x, local_y)
+        return self.x + dx, self.y + dy
+```
+
+`rotate` поворачивает локальное смещение, а `point` возвращает **мировые координаты** точки автомобиля. К примеру, `self.point(44, 15)` — точка переднего колеса.
+
+Угол в Pygame работает так: `self.angle > 0` вращает нос автомобиля по часовой стрелке, то есть **вниз**, если машина смотрит вправо. `self.angle < 0` поднимает нос **вверх**.
+
+### 4.3. Отрисовка автомобиля
+
+Добавь в `Car` простой вариант метода `draw`. Пока кузов будет прямоугольным:
+
+```python
+    def draw(self, surface, camera_x, camera_y=0):
+        def p(x, y):
+            wx, wy = self.point(x, y)
+            return (int(wx - camera_x), int(wy - camera_y))
+
+        body = [(-60, -20), (60, -20), (60, 10), (-60, 10)]
+        pygame.draw.polygon(surface, (224, 90, 54), [p(*v) for v in body])
+        for lx in (-44, 44):
+            pygame.draw.circle(surface, (35, 35, 40), p(lx, 15), 19)
+```
+
+В `Game.draw()` замени тестовый прямоугольник на:
+
+```python
+self.car.draw(self.screen, self.camera_x, self.camera_y)
+```
+
+В готовом `src/car.py` этот же метод рисует более подробный автомобиль, но принцип координат тот же.
+
+---
+
+## 5. Колёса, наклон поверхности и подвеска
+
+Одного простого `self.y = terrain.height(self.x)` недостаточно: машина не сможет прыгать или опираться на склон двумя колёсами. Поэтому вычислим силы **отдельно в двух точках кузова**.
+
+### 5.1. Параметры колёс и подвески
+
+Допиши в `src/settings.py`:
+
+```python
+SPRING = 27000.0
+DAMPING = 3200.0
+WHEEL_RADIUS = 19
+WHEEL_BASE = 88
+```
+
+И добавь эти имена к импорту из `.settings` в `car.py`. Центры колёс находятся в локальных точках `(-WHEEL_BASE / 2, 15)` и `(WHEEL_BASE / 2, 15)`.
+
+### 5.2. Угол поверхности
+
+Добавь в класс `Terrain` (в `src/terrain.py`) два метода:
+
+```python
+    def slope(self, x):
+        return (self.height(x + 4) - self.height(x - 4)) / 8
+
+    def normal(self, x):
+        s = self.slope(x)
+        length = math.hypot(s, 1)
+        return (-s / length, -1 / length)
+```
+
+**Нормаль** — вектор, направленный от поверхности вверх. На ровной дороге он равен `(0, -1)`. `math.hypot` вычисляет длину вектора, чтобы нормаль имела длину 1.
+
+### 5.3. Сила пружины и поворот от колёс
+
+Вместо простого падения из раздела 4.1 теперь используем полный расчёт сил. Следующий блок — **замена метода `Car.update()` целиком**, а не отдельные строки для вставки в случайное место.
+
+Сначала допиши в `src/settings.py`:
+
+```python
+ENGINE_FORCE = 260000.0
+BRAKE_FORCE = 190000.0
+AIR_TORQUE = 335000.0
+MAX_SPEED = 740.0
+```
+
+В `src/car.py` удобно импортировать все параметры явно:
+
+```python
+from .settings import (
+    GRAVITY, MASS, INERTIA, SPRING, DAMPING,
+    ENGINE_FORCE, BRAKE_FORCE, AIR_TORQUE,
+    MAX_SPEED, WHEEL_RADIUS, WHEEL_BASE,
+)
+```
+
+А теперь сам метод:
+
+```python
+    def update(self, dt, terrain, gas, brake):
+        if self.crashed:
+            return
+
+        # Трение воздуха, гравитация и сопротивление вращению.
+        force_x = -self.vx * 60
+        force_y = MASS * GRAVITY - self.vy * 13
+        torque = -self.angular_velocity * 12500
+        contacts = 0
+
+        for lx in (-WHEEL_BASE / 2, WHEEL_BASE / 2):
+            # Положение каждого колеса с учетом наклона кузова.
+            rx, ry = self.rotate(lx, 15)
+            wx, wy = self.x + rx, self.y + ry
+            nx, ny = terrain.normal(wx)
+
+            # Колесо ниже поверхности? Значит, пружина сжата.
+            penetration = (
+                (wy + WHEEL_RADIUS - terrain.height(wx))
+                / max(0.4, -ny)
+            )
+            if penetration <= 0:
+                continue
+
+            contacts += 1
+            # Скорость точки крепления колеса — с учетом вращения.
+            point_vx = self.vx - self.angular_velocity * ry
+            point_vy = self.vy + self.angular_velocity * rx
+            normal_speed = point_vx * nx + point_vy * ny
+
+            spring_force = max(
+                0,
+                SPRING * min(penetration, 65) - DAMPING * normal_speed,
+            )
+            fx, fy = nx * spring_force, ny * spring_force
+
+            # Сила двигателя направлена по касательной к склону.
+            tangent_x, tangent_y = -ny, nx
+            tangential_speed = point_vx * tangent_x + point_vy * tangent_y
+            drive = (int(gas) * ENGINE_FORCE - int(brake) * BRAKE_FORCE) / 2
+            drive -= tangential_speed * (95 if not (gas or brake) else 30)
+            fx += tangent_x * drive
+            fy += tangent_y * drive
+
+            force_x += fx
+            force_y += fy
+            torque += rx * fy - ry * fx
+
+        self.on_ground = contacts > 0
+        if self.on_ground:
+            self.air_time = 0
+        else:
+            self.air_time += dt
+            # В воздухе: газ = назад, тормоз = вперед.
+            torque += (int(brake) - int(gas)) * AIR_TORQUE
+
+        # Обновляем скорости и положение машины.
+        self.vx += force_x / MASS * dt
+        self.vy += force_y / MASS * dt
+        self.angular_velocity += (
+            torque / (INERTIA * (4.5 if self.on_ground else 1)) * dt
+        )
+        self.angular_velocity = max(-4.7, min(4.7, self.angular_velocity))
+        self.vx = max(-300, min(MAX_SPEED, self.vx))
+        self.vy = max(-950, min(1200, self.vy))
+        self.x += self.vx * dt
+        self.y += self.vy * dt
+        self.angle += self.angular_velocity * dt
+
+        # Проверяем столкновение крыши с землей.
+        for lx, ly in ((-34, -26), (20, -38), (47, -18)):
+            px, py = self.point(lx, ly)
+            if py > terrain.height(px) - 2 and math.cos(self.angle) < 0.0:
+                self.crashed = True
+        if self.x < 0:
+            self.x, self.vx = 0, max(0, self.vx)
+        if self.y > 1300:
+            self.crashed = True
+```
+
+Тут **не появляется ни одной отдельной переменной `vx` или `car_x`**: все состояния принадлежат `Car` и называются `self.vx`, `self.x` и так далее.
+
+**Что проверить:** на ровной земле машина опирается сразу на два колеса; на подъёме переднее и заднее колёса передают кузову разные силы. Измени `DAMPING` на `0`, посмотри на раскачку, затем верни `3200`.
+
+---
+
+## 6. Газ, тормоз и перевороты в воздухе
+
+Механика уже включена в `Car.update()` из предыдущего раздела. Теперь подключаем кнопки в `Game.update()`.
+
+Заменяй прежний временный вариант метода `Game.update()` следующим:
+
+```python
+    def update(self, dt, keys):
+        gas = keys[pygame.K_RIGHT] or keys[pygame.K_d] or keys[pygame.K_UP]
+        brake = keys[pygame.K_LEFT] or keys[pygame.K_a] or keys[pygame.K_DOWN]
+
+        # Четыре маленьких шага физики за один кадр.
+        for _ in range(4):
+            self.car.update(dt / 4, self.terrain, gas, brake)
+            if self.car.crashed:
+                break
+
+        desired_camera_x = max(0, self.car.x - WIDTH * 0.30)
+        self.camera_x += (desired_camera_x - self.camera_x) * min(1, dt * 5)
+```
+
+**На земле:** двигатель создаёт силу вдоль склона (`tangent_x`, `tangent_y`). Благодаря этому машина разгоняется по холмам. **В воздухе:** колёса не касаются трассы, поэтому тяги вперёд нет, зато добавляется момент вращения:
+
+```python
+torque += (int(brake) - int(gas)) * AIR_TORQUE
+```
+
+- Газ (`→`, `D`, `↑`) — отрицательный момент, нос машины идёт **вверх**, переворот **назад**.
+- Тормоз (`←`, `A`, `↓`) — положительный момент, нос машины идёт **вниз**, переворот **вперёд**.
+
+`torque` не меняет угол напрямую: он сначала меняет `self.angular_velocity`, а скорость вращения — `self.angle`. Благодаря этому у автомобиля есть инерция.
+
+**Проверка:** разгонись до холма. В полёте зажми газ, потом повтори прыжок с тормозом. Нос должен поворачиваться в противоположные стороны. Не вставляй дополнительное `self.angle += ...` для кнопок — в готовом проекте этого нет.
+
+---
+
+## 7. Усложняем трассу с расстоянием
+
+В разделе 2 у `Terrain.height()` была одна синусоида. Теперь заменим её процедурным рельефом из готового проекта. Всё относится к **классу `Terrain` в `src/terrain.py`**, не к `Game` и не к `Car`.
+
+Добавь импорты `math`, `random` и `HEIGHT` из настроек:
+
+```python
+import math
+import random
+from .settings import HEIGHT
+```
+
+Добавь в `Terrain` конструктор и сложность:
+
+```python
+    def __init__(self):
+        self.seed = 7319
+        rng = random.Random(self.seed)
+        self.waves = [
+            (rng.uniform(.003, .008), rng.uniform(0, 6.28)),
+            (rng.uniform(.011, .020), rng.uniform(0, 6.28)),
+            (rng.uniform(.025, .038), rng.uniform(0, 6.28)),
+        ]
+        self.bumps = []
+        for i in range(1, 260):
+            x = i * 340 + rng.randint(-90, 90)
+            self.bumps.append((
+                x, rng.uniform(45, 110),
+                rng.choice([-1, 1]) * rng.uniform(12, 75),
+            ))
+
+    def difficulty(self, x):
+        return min(6, max(0, int(max(x, 0) / 5000)))
+```
+
+**Важный момент:** `rng = random.Random(self.seed)` гарантирует одинаковый рельеф при каждом запуске. Если генерировать новые случайные холмы прямо внутри `height`, земля будет меняться при каждом обращении — так нельзя.
+
+Полностью замени `Terrain.height()`:
+
+```python
+    def height(self, x):
+        if x < 0:
+            return 565.0
+
+        ramp = min(1.0, max(0.0, (x - 260) / 3400))
+        d = self.difficulty(x)
+        amplitude = ramp * (24 + min(d, 6) * 12)
+        y = 545.0
+
+        for (frequency, phase), factor in zip(self.waves, (1.3, .60, .28)):
+            y += math.sin(x * frequency + phase) * amplitude * factor
+
+        for cx, width, bump_h in self.bumps:
+            if abs(x - cx) < width * 3:
+                y += (
+                    bump_h * ramp * (0.32 + d * .15)
+                    * math.exp(-((x - cx) / width) ** 2 * 1.5)
+                )
+
+        return min(HEIGHT - 95, max(325, y))
+```
+
+`ramp` — плавное появление холмов после стартовой площадки. `d` увеличивается каждые 5000 пикселей. Три синусоиды образуют большие, средние и мелкие неровности. `bumps` добавляет отдельные бугры и впадины.
+
+Методы `slope()` и `normal()` из раздела 5 **оставь без изменений**: они автоматически начнут работать с новым `height()`.
+
+**Задание:** доедь до следующих уровней и сравни первые холмы с более поздними. Попробуй изменить `24 + min(d, 6) * 12` на `24 + min(d, 6) * 18` и посмотри, станет ли трасса проходимой.
+
+---
+
+## 8. Стабилизируем физику и улучшаем камеру
+
+Четыре подшага уже есть в `Game.update()` из раздела 6:
+
+```python
+for _ in range(4):
+    self.car.update(dt / 4, self.terrain, gas, brake)
+```
+
+Это важно, потому что пружины создают большие силы. Если один кадр занимает 1/60 секунды, каждый подшаг длится около 1/240 секунды. Так подвеска ведёт себя стабильнее.
+
+В `Car.update()` мы также ограничили `self.vx`, `self.vy` и `self.angular_velocity`: машина не должна бесконечно ускоряться из-за сильного удара.
+
+Для прыжков добавим вертикальное слежение камеры. В конец `Game.update()`:
+
+```python
+desired_camera_y = max(-150, min(180, self.car.y - 415))
+self.camera_y += (desired_camera_y - self.camera_y) * min(1, dt * 2)
+```
+
+Чтобы камера работала и для трассы, измени `Terrain.draw()`, добавив необязательный аргумент `camera_y=0` и вычитая его из координат всех нарисованных точек. В готовой версии это уже реализовано. Затем вызывай:
+
+```python
+self.terrain.draw(self.screen, self.camera_x, self.camera_y)
+self.car.draw(self.screen, self.camera_x, self.camera_y)
+```
+
+**Проверь:** когда машина высоко подпрыгивает, камера немного следует за ней вверх. Когда приземляется, возвращается плавно.
+
+---
+
+## 9. Монеты, топливо и окончание заезда
+
+Эти данные относятся **к `Game`, не к `Car`**: автомобиль отвечает за движение, а игра — за количество монет, топливо и проигрыш.
+
+### 9.1. Состояние заезда
+
+В готовой версии `Game.__init__()` в конце вызывает `self.reset()`, а метод `reset()` создаёт всё для нового заезда. Когда будешь переносить архитектуру, замени первоначальную инициализацию трассы, машины и камер на вызов `self.reset()`.
+
+```python
+    def reset(self):
+        self.terrain = Terrain()
+        self.car = Car(105, self.terrain)
+        self.camera_x = 0.0
+        self.camera_y = 0.0
+        self.coins = 0
+        self.fuel = 100.0
+        self.best_x = 105.0
+        self.game_over = False
+        self.paused = False
+        self.pickups = []
+        self.next_pickup_x = 650
+        self.spawn_pickups(2500)
+```
+
+`best_x` — максимальная достигнутая координата, чтобы расстояние не уменьшалось, если автомобиль едет назад.
+
+### 9.2. Генерация предметов
+
+Добавь в `Game`:
+
+```python
+    def spawn_pickups(self, right_edge):
+        while self.next_pickup_x < right_edge:
+            x = self.next_pickup_x
+            kind = ('fuel' if int(x // 1150) > int((x - 300) // 1150)
+                    else 'coin')
+            offset = 85 if kind == 'fuel' else 68
+            self.pickups.append({
+                'x': x,
+                'y': self.terrain.height(x) - offset,
+                'type': kind,
+                'taken': False,
+            })
+            self.next_pickup_x += 280
+```
+
+Это список словарей. Каждый словарь хранит мировые координаты предмета, его тип и флаг `taken`.
+
+### 9.3. Подбор предметов и расход бензина
+
+Добавь в `Game.update()` **после цикла физики**, но перед обновлением камеры:
+
+```python
+self.best_x = max(self.best_x, self.car.x)
+self.fuel -= dt * (0.47 + (0.55 if gas else 0))
+if self.fuel <= 0:
+    self.fuel = 0
+    self.game_over = True
+
+self.spawn_pickups(self.car.x + WIDTH * 2)
+for item in self.pickups:
+    if item['taken']:
+        continue
+    if math.hypot(self.car.x - item['x'], self.car.y - item['y']) < 62:
+        item['taken'] = True
+        if item['type'] == 'fuel':
+            self.fuel = min(100, self.fuel + 42)
+        else:
+            self.coins += 1
+self.pickups = [
+    p for p in self.pickups
+    if not p['taken'] and p['x'] > self.car.x - 2000
+]
+```
+
+Не забудь `import math` вверху `game.py`. В самом начале `Game.update()` добавь:
+
+```python
+if self.game_over or self.paused:
+    return
+```
+
+А внутри цикла физики при `self.car.crashed` выставляй `self.game_over = True` и прерывай цикл. Код полного `Game.update()` можно сверить с готовым файлом `src/game.py`.
+
+### 9.4. Перезапуск и пауза
+
+В методе `Game.run()`, внутри перебора `pygame.event.get()`, добавь обработку `KEYDOWN`:
+
+```python
+if event.type == pygame.KEYDOWN:
+    if event.key in (pygame.K_r, pygame.K_SPACE):
+        self.reset()
+    elif event.key == pygame.K_p and not self.game_over:
+        self.paused = not self.paused
+    elif event.key == pygame.K_ESCAPE:
+        running = False
+```
+
+**Проверка:** канистры должны восстанавливать запас топлива, монеты увеличивать счёт, а `R` начинать новый заезд.
+
+---
+
+## 10. Отрисовка предметов и интерфейса
+
+В `Game` создай отдельные методы `draw_pickups()` и `draw_hud()`. Эти методы **рисуют**, но не изменяют физику и не собирают предметы.
+
+### 10.1. Предметы
+
+Для каждого несобранного предмета переводим его координаты из мировых в экранные:
+
+```python
+x = int(item['x'] - self.camera_x)
+y = int(item['y'] - self.camera_y)
+```
+
+Монету удобно нарисовать несколькими окружностями, канистру — прямоугольниками. Например, внутри `Game.draw_pickups()`:
+
+```python
+    def draw_pickups(self):
+        for item in self.pickups:
+            if item['taken']:
+                continue
+            x = int(item['x'] - self.camera_x)
+            y = int(item['y'] - self.camera_y)
+            if not (-40 < x < WIDTH + 40):
+                continue
+            if item['type'] == 'coin':
+                pygame.draw.circle(self.screen, (229, 153, 33), (x, y), 18)
+                pygame.draw.circle(self.screen, (255, 219, 83), (x, y), 14)
+            else:
+                pygame.draw.rect(self.screen, (203, 58, 53),
+                                 (x - 17, y - 19, 34, 39), border_radius=4)
+```
+
+### 10.2. Счётчики
+
+В `Game.__init__()` до вызова `self.reset()` создай шрифт:
+
+```python
+self.font = pygame.font.SysFont('arial', 25, bold=True)
+```
+
+Простейший `Game.draw_hud()`:
+
+```python
+    def draw_hud(self):
+        distance = max(0, int((self.best_x - 105) / 12))
+        lines = [
+            f'Расстояние: {distance} м',
+            f'Монеты: {self.coins}',
+            f'Топливо: {int(self.fuel)}%',
+            f'Участок: {self.terrain.difficulty(self.best_x) + 1} / 7',
+        ]
+        for index, line in enumerate(lines):
+            image = self.font.render(line, True, (30, 50, 60))
+            self.screen.blit(image, (20, 20 + index * 32))
+```
+
+В готовой версии интерфейс красочнее: там есть шкала топлива, затенение экрана при аварии, облака и параллакс. Основной принцип при этом не меняется.
+
+Обнови `Game.draw()`:
+
+```python
+    def draw(self):
+        self.screen.fill((141, 208, 232))
+        self.terrain.draw(self.screen, self.camera_x, self.camera_y)
+        self.draw_pickups()
+        self.car.draw(self.screen, self.camera_x, self.camera_y)
+        self.draw_hud()
+        pygame.display.flip()
+```
+
+**Задание:** сделай полосу топлива: сначала нарисуй серую подложку, затем зелёную полосу шириной, пропорциональной `self.fuel / 100`.
+
+---
+
+## 11. Сверяем архитектуру с готовой игрой
+
+К этому моменту у тебя уже есть основные механики. Итоговые роли файлов должны совпадать с готовым проектом:
+
+| Файл | Что в нём находится |
+|---|---|
+| `main.py` | Создание `Game` и запуск `run()` |
+| `src/settings.py` | Параметры физики, размеры окна и FPS |
+| `src/terrain.py` | `Terrain`: `height()`, `slope()`, `normal()`, `difficulty()`, `draw()` |
+| `src/car.py` | `Car`: координаты и скорости, `rotate()`, `point()`, `update()`, `draw()` |
+| `src/game.py` | `Game`: состояние заезда, камера, предметы, интерфейс и игровой цикл |
+
+Не путай два метода `update`:
+
+- `Game.update(dt, keys)` **читает клавиатуру, обновляет игровые данные и вызывает физику**.
+- `Car.update(dt, terrain, gas, brake)` **рассчитывает силы, скорости, положение и столкновения автомобиля**.
+
+В финальном проекте `main.py` остаётся коротким:
+
+```python
+from src.game import Game
+
+if __name__ == '__main__':
+    Game().run()
+```
+
+В разделе 1 мы временно писали игровой цикл прямо в `main.py`, но с раздела 3 перенесли его в `Game.run()`. **Не оставляй одновременно два игровых цикла.**
+
+### Чек-лист готовности
+
+- [ ] `Game` создаёт `self.terrain`, `self.car` и `self.camera_x`.
+- [ ] У машины есть `self.x`, `self.y`, `self.vx`, `self.vy`, `self.angle` и `self.angular_velocity`.
+- [ ] Газ и тормоз действуют по склону, а не просто по горизонтали.
+- [ ] В воздухе газ вращает машину **назад**, тормоз — **вперёд**.
+- [ ] Два колеса взаимодействуют с рельефом независимо.
+- [ ] Камера двигается за машиной; трасса становится сложнее вдали от старта.
+- [ ] Монеты, топливо, проигрыш, перезапуск и пауза работают.
+
+### Дополнительные задания
+
+**Легко:** сделай индикатор скорости автомобиля: `abs(self.car.vx) / 12 * 3.6` км/ч (приближённо, при 12 пикселях на метр).
+
+**Средне:** добавь разные автомобили, меняя `MASS`, `INERTIA` и `ENGINE_FORCE`.
+
+**Сложнее:** добавь награду за переворот на 360° в воздухе, но выдавай её лишь после удачного приземления.
+
+**Эксперимент:** уменьши `INERTIA` и посмотри, насколько быстрее автомобиль вращается. Затем увеличь `DAMPING` и проверь, насколько спокойнее становится подвеска.
